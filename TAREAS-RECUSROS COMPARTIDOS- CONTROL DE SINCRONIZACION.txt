@@ -1,0 +1,239 @@
+#include <wx/wx.h>
+#include <wx/listctrl.h>
+#include <pthread.h>
+#include <vector>
+#include <string>
+
+// Estructura para mantener la información de la imagen
+struct Image {
+    wxBitmap bitmap;
+    std::string path;
+};
+
+// Estructura para la información de la tarea
+struct Task {
+    int id;
+    wxString status;
+    Image originalImage;
+    Image processedImage;
+    wxString filterType;
+    pthread_t thread;
+};
+
+std::vector<Task> taskList;
+pthread_mutex_t taskMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t taskCond = PTHREAD_COND_INITIALIZER;
+
+wxBitmap convertToGrayscale(const wxBitmap& original) {
+    wxImage image = original.ConvertToImage();
+    int width = image.GetWidth();
+    int height = image.GetHeight();
+
+    for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
+            int r = image.GetRed(x, y);
+            int g = image.GetGreen(x, y);
+            int b = image.GetBlue(x, y);
+            int gray = (r + g + b) / 3;
+
+            image.SetRGB(x, y, gray, gray, gray);
+        }
+    }
+
+    return wxBitmap(image);
+}
+
+void* executeTask(void* arg) {
+    Task* task = (Task*) arg;
+
+    pthread_mutex_lock(&taskMutex);
+    task->status = wxT("En proceso");
+    pthread_mutex_unlock(&taskMutex);
+
+    if (task->filterType == wxT("Escala de Grises")) {
+        task->processedImage.bitmap = convertToGrayscale(task->originalImage.bitmap);
+    }
+
+    pthread_mutex_lock(&taskMutex);
+    task->status = wxT("Completado");
+    pthread_mutex_unlock(&taskMutex);
+
+    return NULL;
+}
+
+class MyFrame : public wxFrame {
+public:
+    MyFrame(const wxString& title);
+    void OnLoadImage(wxCommandEvent& event);
+    void OnAddTask(wxCommandEvent& event);
+    void OnRemoveTask(wxCommandEvent& event);
+    void OnTimer(wxTimerEvent& event);
+
+    wxListView* taskListView;
+    wxStaticBitmap* originalImage;
+    wxStaticBitmap* processedImage;
+    wxComboBox* filterComboBox;
+    wxTextCtrl* logTextCtrl;
+    wxTimer* updateTimer;
+
+    enum {
+        ID_LoadImage = wxID_HIGHEST + 1,
+        ID_AddTask,
+        ID_RemoveTask,
+        ID_UpdateTimer
+    };
+
+    DECLARE_EVENT_TABLE()
+};
+
+BEGIN_EVENT_TABLE(MyFrame, wxFrame)
+    EVT_BUTTON(ID_LoadImage, MyFrame::OnLoadImage)
+    EVT_BUTTON(ID_AddTask, MyFrame::OnAddTask)
+    EVT_BUTTON(ID_RemoveTask, MyFrame::OnRemoveTask)
+    EVT_TIMER(ID_UpdateTimer, MyFrame::OnTimer)
+END_EVENT_TABLE()
+
+MyFrame::MyFrame(const wxString& title) : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(800, 600)) {
+    wxPanel *panel = new wxPanel(this, wxID_ANY);
+
+    taskListView = new wxListView(panel, wxID_ANY, wxPoint(10, 10), wxSize(400, 200));
+    originalImage = new wxStaticBitmap(panel, wxID_ANY, wxBitmap(100, 100), wxPoint(420, 10));
+    processedImage = new wxStaticBitmap(panel, wxID_ANY, wxBitmap(100, 100), wxPoint(530, 10));
+    filterComboBox = new wxComboBox(panel, wxID_ANY, wxT(""), wxPoint(10, 220));
+    filterComboBox->Append(wxT("Escala de Grises"));
+    logTextCtrl = new wxTextCtrl(panel, wxID_ANY, wxT(""), wxPoint(10, 250), wxSize(400, 100));
+
+    new wxButton(panel, ID_LoadImage, wxT("Cargar imagen"), wxPoint(420, 220));
+    new wxButton(panel, ID_AddTask, wxT("Agregar tarea"), wxPoint(420, 250));
+    new wxButton(panel, ID_RemoveTask, wxT("Eliminar tarea"), wxPoint(420, 280));
+
+    updateTimer = new wxTimer(this, ID_UpdateTimer);
+    updateTimer->Start(1000);
+}
+
+void MyFrame::OnLoadImage(wxCommandEvent& event) {
+    wxFileDialog openFileDialog(this, wxT("Abrir archivo de imagen"), "", "",
+                                "Archivos de imagen (*.bmp;*.png;*.jpg)|*.bmp;*.png;*.jpg", wxFD_OPEN|wxFD_FILE_MUST_EXIST);
+
+    if (openFileDialog.ShowModal() == wxID_CANCEL) {
+        logTextCtrl->AppendText(wxT("Carga de imagen cancelada.\n"));
+        return;
+    }
+
+    wxBitmap bitmap(openFileDialog.GetPath(), wxBITMAP_TYPE_ANY);
+
+    if (!bitmap.IsOk()) {
+        logTextCtrl->AppendText(wxT("Error al cargar la imagen.\n"));
+        return;
+    }
+
+    Image img;
+    img.bitmap = bitmap;
+    img.path = openFileDialog.GetPath().ToStdString();
+
+    Task newTask;
+    newTask.id = taskList.size() + 1;
+    newTask.status = wxT("Pendiente");
+    newTask.originalImage = img;
+    newTask.filterType = filterComboBox->GetValue();
+    pthread_create(&newTask.thread, NULL, executeTask, &newTask);
+
+    pthread_mutex_lock(&taskMutex);
+    taskList.push_back(newTask);
+    pthread_mutex_unlock(&taskMutex);
+
+    logTextCtrl->AppendText(wxT("Imagen cargada y tarea añadida.\n"));
+}
+
+void MyFrame::OnAddTask(wxCommandEvent& event) {
+    if (taskList.empty()) {
+        logTextCtrl->AppendText(wxT("No hay imágenes cargadas para añadir tarea.\n"));
+        return;
+    }
+
+    Task& lastTask = taskList.back();
+    Task newTask;
+    newTask.id = taskList.size() + 1;
+    newTask.status = wxT("Pendiente");
+    newTask.originalImage = lastTask.originalImage; // Utiliza la última imagen cargada
+    newTask.filterType = filterComboBox->GetValue(); // Utiliza el filtro seleccionado
+    pthread_create(&newTask.thread, NULL, executeTask, &newTask);
+
+    pthread_mutex_lock(&taskMutex);
+    taskList.push_back(newTask);
+    pthread_mutex_unlock(&taskMutex);
+
+    logTextCtrl->AppendText(wxT("Nueva tarea añadida.\n"));
+}
+
+void MyFrame::OnRemoveTask(wxCommandEvent& event) {
+    long index = -1;
+    index = taskListView->GetNextItem(index, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+
+    if (index == -1) {
+        logTextCtrl->AppendText(wxT("Por favor, selecciona una tarea para eliminar.\n"));
+        return;
+    }
+
+    if (index >= 0 && index < taskList.size()) {
+        pthread_mutex_lock(&taskMutex);
+
+        Task& task = taskList[index];
+        if (pthread_cancel(task.thread) == 0) {
+            taskList.erase(taskList.begin() + index);
+            taskListView->DeleteItem(index);
+            logTextCtrl->AppendText(wxT("Tarea eliminada.\n"));
+        } else {
+            logTextCtrl->AppendText(wxT("Error al eliminar la tarea.\n"));
+        }
+
+        pthread_mutex_unlock(&taskMutex);
+    }
+}
+
+void MyFrame::OnTimer(wxTimerEvent& event) {
+    pthread_mutex_lock(&taskMutex);
+
+    taskListView->DeleteAllItems();
+
+    for (size_t i = 0; i < taskList.size(); ++i) {
+        Task& task = taskList[i];
+
+        wxListItem item;
+        item.SetId(i);
+        item.SetText(wxString::Format(wxT("Tarea %d"), task.id));
+        item.SetColumn(0);
+        taskListView->InsertItem(item);
+        taskListView->SetItem(i, 1, task.status);
+
+        if (task.status == wxT("Completado")) {
+            originalImage->SetBitmap(task.originalImage.bitmap);
+            processedImage->SetBitmap(task.processedImage.bitmap);
+        }
+    }
+
+    pthread_mutex_unlock(&taskMutex);
+}
+
+class MyApp : public wxApp {
+public:
+    virtual bool OnInit();
+};
+
+IMPLEMENT_APP(MyApp)
+
+bool MyApp::OnInit() {
+    MyFrame *frame = new MyFrame(wxT("Gestor de Tareas"));
+    frame->Show(true);
+    return true;
+}
+
+int main() {
+    wxEntryStart(wxApp::argc, wxApp::argv);
+    wxTheApp->CallOnInit();
+    wxTheApp->OnRun();
+    wxTheApp->OnExit();
+    wxEntryCleanup();
+    return 0;
+}
+
