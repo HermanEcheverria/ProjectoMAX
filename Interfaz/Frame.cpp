@@ -1,61 +1,43 @@
-
+Frame .cpp
 #include "Frame.h"
+#include <wx/listctrl.h>
+#include <wx/filedlg.h>
+#include <opencv2/opencv.hpp>
 
-wxBEGIN_EVENT_TABLE(Frame, wxFrame)
-    EVT_BUTTON(ID_AddTask, Frame::OnAddTask)
-    EVT_BUTTON(ID_DeleteTask, Frame::OnDeleteTask)
-    EVT_BUTTON(wxID_EXIT, Frame::OnExit)
-wxEND_EVENT_TABLE()
+#include "SharedResources.h"  // Include shared resources
+pthread_mutex_t taskMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t taskCond = PTHREAD_COND_INITIALIZER;
 
 Frame::Frame(const wxString& title, const wxPoint& pos, const wxSize& size)
-    : wxFrame(NULL, wxID_ANY, title, pos, size)
-{
-    wxPanel* panel = new wxPanel(this, -1);
+    : wxFrame(NULL, wxID_ANY, title, pos, size) {
 
-    addButton = new wxButton(panel, ID_AddTask, wxT("Agregar Tarea"), wxPoint(170, 10));
-    deleteButton = new wxButton(panel, ID_DeleteTask, wxT("Eliminar Tarea"), wxPoint(170, 50));
-    taskList = new wxListBox(panel, -1, wxPoint(10, 10), wxSize(150, 100));
+    wxBoxSizer *mainSizer = new wxBoxSizer(wxVERTICAL);
 
-    Centre();
-}
+    taskListView = new wxListView(this, wxID_ANY);
+    originalImage = new wxStaticBitmap(this, wxID_ANY, wxBitmap(100, 100));
+    processedImage = new wxStaticBitmap(this, wxID_ANY, wxBitmap(100, 100));
+    filterComboBox = new wxComboBox(this, wxID_ANY, wxT(""));
+    logTextCtrl = new wxTextCtrl(this, wxID_ANY, wxT(""), wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE);
+    updateTimer = new wxTimer(this, ID_UpdateTimer);
 
-Frame::~Frame()
-{
+    mainSizer->Add(taskListView, 1, wxEXPAND);
+    mainSizer->Add(originalImage, 0, wxALIGN_CENTER);
+    mainSizer->Add(processedImage, 0, wxALIGN_CENTER);
+    mainSizer->Add(filterComboBox, 0, wxALIGN_CENTER);
+    mainSizer->Add(logTextCtrl, 0, wxEXPAND);
 
-}
+    // Adding Buttons
+    wxBoxSizer *buttonSizer = new wxBoxSizer(wxHORIZONTAL);
+    buttonSizer->Add(new wxButton(this, ID_LoadImage, wxT("Load Image")), 0, wxALL, 5);
+    buttonSizer->Add(new wxButton(this, ID_AddTask, wxT("Add Task")), 0, wxALL, 5);
+    buttonSizer->Add(new wxButton(this, ID_DeleteTask, wxT("Remove Task")), 0, wxALL, 5);
+    mainSizer->Add(buttonSizer, 0, wxALIGN_CENTER);
 
-void Frame::OnButtonClicked(wxCommandEvent& event)
-{
-    // Manejar el evento de botón aquí
-}
+    this->SetSizer(mainSizer);
 
-void Frame::OnExit(wxCommandEvent& event)
-{
-    Close(true);
-}
-
-void Frame::OnAddTask(wxCommandEvent& event)
-{
-    wxString name;
-    wxTextEntryDialog dialog(this, "Ingrese el nombre de la tarea:", "Nueva Tarea");
-
-    if (dialog.ShowModal() == wxID_OK)
-    {
-        name = dialog.GetValue();
-        if (!name.IsEmpty())
-        {
-            // Agregar la tarea a la lista
-            taskList->Append(name);
-        }
-    }
-}
-
-
-void Frame::OnDeleteTask(wxCommandEvent& event)
-{
-    int selectedItem = taskList->GetSelection();
-    if (selectedItem != wxNOT_FOUND)
-    {
-        taskList->Delete(selectedItem);
-    }
+    // Event Bindings
+    Bind(wxEVT_BUTTON, &Frame::OnLoadImage, this, ID_LoadImage);
+    Bind(wxEVT_BUTTON, &Frame::OnAddTask, this, ID_AddTask);
+    Bind(wxEVT_BUTTON, &Frame::OnDeleteTask, this, ID_DeleteTask);
+    Bind(wxEVT_TIMER, &Frame::OnTimer, this, ID_UpdateTimer);
 }
