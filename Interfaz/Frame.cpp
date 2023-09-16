@@ -91,3 +91,14 @@ wxBEGIN_EVENT_TABLE(Frame, wxFrame)
     EVT_BUTTON(ID_AddTask, Frame::OnAddTask)
     EVT_BUTTON(ID_DeleteTask, Frame::OnDeleteTask)
 wxEND_EVENT_TABLE()
+
+#pragma once
+#include <string>
+
+class Task {
+public:
+    std::string filterType;
+    std::string status; // New field for status
+
+    Task() : filterType(""), status("Pending") {}
+};
